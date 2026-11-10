@@ -1,0 +1,27 @@
+capabilities = { network = ["127.0.0.1"], purpose = "Reads AI usage from a local CodexBar server." }
+
+[options.providers]
+type = "strings"
+title = "Providers (CodexBar IDs)"
+default = ["codex", "cursor", "copilot"]
+
+[options.percent]
+type = "boolean"
+title = "Show percentage on the bar"
+default = true
+
+[options.refresh]
+type = "number"
+title = "Refresh interval (seconds)"
+default = 120
+min = 60
+max = 3600
+step = 30
+
+[options.port]
+type = "number"
+title = "CodexBar server port"
+default = 18487
+min = 1024
+max = 65535
+step = 1

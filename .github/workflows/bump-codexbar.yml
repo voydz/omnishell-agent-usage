@@ -1,0 +1,46 @@
+name: Bump CodexBar
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-codexbar
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Update codexbar.lock
+        run: ./scripts/bump-codexbar.sh
+
+      - name: Open a pull request
+        run: |
+          if git diff --quiet -- codexbar.lock; then
+            echo "Nothing to bump."
+            exit 0
+          fi
+          version="$(sed -n 's/^version=//p' codexbar.lock)"
+          branch="bump/codexbar-$version"
+          if [ "$(gh pr list --head "$branch" --state all --json number --jq length)" != "0" ]; then
+            echo "A pull request for $version already exists."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -m "Bump CodexBar CLI to $version" -- codexbar.lock
+          git push --force origin "$branch"
+          gh pr create --head "$branch" \
+            --title "Bump CodexBar CLI to $version" \
+            --body "Points \`codexbar.lock\` at [CodexBar v$version](https://github.com/steipete/CodexBar/releases/tag/v$version) with the checksums of its macOS CLI tarballs. Read the release notes before merging; \`./install.sh\` installs whatever this file pins."

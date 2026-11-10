@@ -1,0 +1,6 @@
+# Pinned CodexBar CLI release, read by install.sh and bumped by
+# .github/workflows/bump-codexbar.yml. Checksums are of the release tarballs
+# at https://github.com/steipete/CodexBar/releases.
+version=0.84.0
+sha256_macos_arm64=77a318c6b904983711f1b7d248211b1bbd4a77b5e038258a79ba2258683f2603
+sha256_macos_x86_64=b35454380d73ea0d76e9406533bff997063963e2c5b31c6a55767aa45d72515d
