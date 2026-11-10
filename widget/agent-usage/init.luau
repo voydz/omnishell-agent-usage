@@ -265,6 +265,30 @@ local function detail(inner, row)
     return ui.column(column)
 end
 
+-- A provider's charted figures side by side, e.g. spend today, this week, this month.
+local function strip(inner, stats)
+    local gap = 8
+    local width = (inner - gap * (#stats - 1)) / #stats
+    local row = { w = inner, gap = gap }
+    for _, item in stats do
+        row[#row + 1] = ui.column{ w = width, gap = 2, center = false,
+            look.text{ text = item.label, size = 11, color = "secondaryForeground", maxWidth = width },
+            look.text{ text = item.value, size = 13, weight = "medium", maxWidth = width } }
+    end
+    return ui.row(row)
+end
+
+-- Shows or hides a card's remaining detail rows; one card is open at a time.
+local function disclosure(inner, id, open)
+    return ui.row{ w = inner, gap = 6, key = "details-" .. id, hover = TRACK, radius = 4,
+        onClick = function(ctx)
+            ctx.state.details = if open then false else id
+        end,
+        look.text{ text = if open then "Hide details" else "Details", size = 11, color = "secondaryForeground",
+            grow = 1 },
+        look.glyph{ name = if open then "chevron.up" else "chevron.down", size = 10, color = "secondaryForeground" } }
+end
+
 local function notice(text, width, color)
     return look.text{ text = text, size = 11, color = color or "secondaryForeground", maxWidth = width, lines = 4 }
 end
@@ -295,10 +319,23 @@ local function card(ctx, id, now, width, inner, shared)
             group[#group + 1] = meter(ctx, inner, spend.label, value, math.clamp(spend.used / spend.limit, 0, 1),
                 if sameReset then nil else resetLine(spend, now))
         end
+        if #snapshot.stats > 0 then
+            group[#group + 1] = strip(inner, snapshot.stats)
+        end
         for _, row in snapshot.rows do
             group[#group + 1] = detail(inner, row)
         end
-        if #snapshot.windows == 0 and not spend and #snapshot.rows == 0 then
+        if #snapshot.more > 0 then
+            local open = ctx.state.details == id
+            group[#group + 1] = disclosure(inner, id, open)
+            if open then
+                for _, row in snapshot.more do
+                    group[#group + 1] = detail(inner, row)
+                end
+            end
+        end
+        if #snapshot.windows == 0 and not spend and #snapshot.stats == 0 and #snapshot.rows == 0
+            and #snapshot.more == 0 then
             group[#group + 1] = notice("No usage figures reported.", inner)
         end
     end

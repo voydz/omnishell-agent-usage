@@ -143,8 +143,11 @@ local credited = model.read("codex", { {
 } })
 check("credits row", credited.rows[1].value, "112.4")
 check("numeric row value", credited.rows[2].value, "1")
-check("rows are capped", #credited.rows, 12)
-check("last row kept", credited.rows[12].label, "k")
+check("three rows at a glance", #credited.rows, 3)
+check("glance keeps the order", credited.rows[3].label, "b")
+check("rows are capped in total", #credited.rows + #credited.more, 12)
+check("last row kept", credited.more[9].label, "k")
+check("no chart, no stats", #credited.stats, 0)
 
 -- OpenRouter: a credits window without a period, balance as the plan, rows from several sections
 local openrouter = model.read("openrouter", { {
@@ -162,7 +165,11 @@ local openrouter = model.read("openrouter", { {
                 { label = "Used", value = "$2191.18" },
                 { label = "Total added", value = "$2260.00" },
             } },
-            { title = "API key", chart = { kind = "bars" }, rows = {
+            { title = "API key", chart = { kind = "bars", unit = "USD", title = "Key spend", points = {
+                { label = "Today", value = 2.4837552 },
+                { label = "This week", value = 3.095432852 },
+                { label = "This month", value = 3.64607744 },
+            } }, rows = {
                 { label = "API key limit", value = "$100.00", secondaryValue = "Spending cap, not balance" },
                 { label = "API key remaining", value = "$96.35" },
                 { label = "API key used", value = "$551.79" },
@@ -181,9 +188,32 @@ check("openrouter plan", openrouter.plan, "Balance: $68.82")
 check("openrouter window label", openrouter.windows[1].label, "Credits")
 check("openrouter window has no reset", openrouter.windows[1].resetsAt, nil)
 near("openrouter headline", openrouter.headline, 0.03646)
-check("openrouter keeps every row", #openrouter.rows, 11)
-check("openrouter spend today", openrouter.rows[8].value, "$2.48")
-check("openrouter row note", openrouter.rows[4].note, "Spending cap, not balance")
+check("openrouter stats", #openrouter.stats, 3)
+check("openrouter stat label", openrouter.stats[1].label, "Today")
+check("openrouter stat value", openrouter.stats[1].value, "$2.48")
+check("openrouter shows no rows at a glance", #openrouter.rows, 0)
+check("openrouter rows minus the charted ones", #openrouter.more, 8)
+check("openrouter detail order", openrouter.more[1].label, "Remaining")
+check("openrouter row note", openrouter.more[4].note, "Spending cap, not balance")
+check("openrouter last detail", openrouter.more[8].label, "Last 30 days")
+
+-- Charted figures in other units, and rows pinned next to meters
+local charted = model.read("kilo", { {
+    provider = "kilo",
+    credits = { remaining = 5 },
+    usage = {
+        primary = { usedPercent = 10 },
+        details = { { chart = { unit = "requests", points = {
+            { label = "Today", value = 12 }, { label = "Week", value = 1.5 }, { label = "", value = 3 },
+            { label = "Bad" }, { label = "C", value = 3 }, { label = "D", value = 4 }, { label = "E", value = 5 },
+        } }, rows = { { label = "Other", value = "x" } } } },
+    },
+} })
+check("stats are capped", #charted.stats, 4)
+check("whole number stat", charted.stats[1].value, "12 requests")
+check("fractional stat", charted.stats[2].value, "1.50 requests")
+check("credits stay visible next to meters", charted.rows[1].label, "Credits left")
+check("other rows wait in details", charted.more[1].label, "Other")
 
 -- Failures
 local snapshot, problem = model.read("openrouter", { {

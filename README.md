@@ -85,9 +85,12 @@ windows a provider reports on the side. A provider with no rate windows, such as
 shows its detail rows in the panel and leaves the bar figure alone.
 
 **In the panel:** one card per provider with its plan, a meter and reset countdown per window, spend
-against the limit where the provider reports one, and any detail rows. The button in the header
-fetches fresh numbers. A card is marked "Stale" when its last refresh failed and it is showing older
-numbers, and the error is shown with it.
+against the limit where the provider reports one, and the figures a provider charts (OpenRouter's
+spend today, this week and this month). Everything else a provider reports sits behind "Details",
+so a card stays short; a provider with no meters shows its first three rows directly.
+
+The button in the header fetches fresh numbers. A card is marked "Stale" when its last refresh
+failed and it is showing older numbers, and the error is shown with it.
 
 ## How it works
 

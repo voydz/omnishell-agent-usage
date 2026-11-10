@@ -18,6 +18,8 @@ local NAMES = {
 local SLOTS = { "primary", "secondary", "tertiary" }
 local SLOT_LABELS = { primary = "Usage", secondary = "Secondary", tertiary = "Tertiary" }
 local MAX_DETAIL_ROWS = 12
+local GLANCE_ROWS = 3
+local MAX_STATS = 4
 
 -- JSON null decodes to a userdata sentinel, so these also reject it.
 local function object(value)
@@ -186,24 +188,69 @@ local function spend(usage)
     }
 end
 
-local function details(entry, usage)
-    local rows = {}
+local function amount(value, unit)
+    if unit and string.match(unit, "^%u%u%u$") then
+        return M.money(value, unit)
+    end
+    local shown = if value % 1 == 0 then string.format("%d", value) else string.format("%.2f", value)
+    return if unit then shown .. " " .. unit else shown
+end
+
+-- The figures a provider charts (OpenRouter: spend today, this week, this
+-- month), from the first detail section that has any.
+local function stats(usage)
+    for _, section in object(usage.details) or {} do
+        local chart = object(section) and object(section.chart)
+        local list = {}
+        for _, raw in chart and object(chart.points) or {} do
+            local point = object(raw)
+            local label, value = point and text(point.label), point and number(point.value)
+            if label and value and #list < MAX_STATS then
+                list[#list + 1] = { label = label, value = amount(value, text(chart.unit)) }
+            end
+        end
+        if #list > 0 then
+            return list, section
+        end
+    end
+    return {}, nil
+end
+
+-- Detail rows, split into the few shown at a glance and the rest. A card that
+-- already leads with meters or stats keeps its rows for the expanded view.
+local function details(entry, usage, charted, section, lead)
+    local glance, more = {}, {}
+    local function add(row, pinned)
+        if #glance + #more >= MAX_DETAIL_ROWS then
+            return
+        end
+        if pinned or (not lead and #glance < GLANCE_ROWS) then
+            glance[#glance + 1] = row
+        else
+            more[#more + 1] = row
+        end
+    end
     local credits = object(entry.credits)
     local remaining = credits and number(credits.remaining)
     if remaining and remaining > 0 then
-        rows[#rows + 1] = { label = "Credits left", value = string.format("%.1f", remaining) }
+        add({ label = "Credits left", value = string.format("%.1f", remaining) }, true)
     end
-    for _, section in object(usage.details) or {} do
-        for _, raw in object(section) and object(section.rows) or {} do
+    local shown = {}
+    for _, item in charted do
+        shown[item.label] = true
+    end
+    for _, group in object(usage.details) or {} do
+        for _, raw in object(group) and object(group.rows) or {} do
             local row = object(raw)
             local label = row and text(row.label)
             local value = row and (text(row.value) or (number(row.value) and tostring(row.value)))
-            if label and value and #rows < MAX_DETAIL_ROWS then
-                rows[#rows + 1] = { label = label, value = value, note = text(row.secondaryValue) }
+            -- A row that repeats a charted figure would only say it twice.
+            if label and value and not (group == section and shown[label]) then
+                add({ label = label, value = value, note = text(row.secondaryValue) }, false)
             end
         end
     end
-    return rows
+    return glance, more
 end
 
 -- The tightest limit that stands on its own: sub-lanes and extra allowances
@@ -246,12 +293,17 @@ function M.read(id, body)
     end
     local name = M.name(id)
     local list = windows(entry, usage)
+    local cost = spend(usage)
+    local charted, section = stats(usage)
+    local rows, more = details(entry, usage, charted, section, #list > 0 or cost ~= nil or #charted > 0)
     return {
         plan = plan(usage, name),
         windows = list,
         headline = headline(list),
-        spend = spend(usage),
-        rows = details(entry, usage),
+        spend = cost,
+        stats = charted,
+        rows = rows,
+        more = more,
         updatedAt = M.time(usage.updatedAt),
     }, problem
 end
