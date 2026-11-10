@@ -17,7 +17,7 @@ local NAMES = {
 
 local SLOTS = { "primary", "secondary", "tertiary" }
 local SLOT_LABELS = { primary = "Usage", secondary = "Secondary", tertiary = "Tertiary" }
-local MAX_DETAIL_ROWS = 6
+local MAX_DETAIL_ROWS = 12
 
 -- JSON null decodes to a userdata sentinel, so these also reject it.
 local function object(value)

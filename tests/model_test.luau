@@ -129,15 +129,61 @@ check("no login method, no plan", unlabeled.plan, nil)
 local credited = model.read("codex", { {
     provider = "codex",
     credits = { remaining = 112.44 },
-    usage = { details = { { rows = {
-        { label = "a", value = 1 }, { label = "b", value = "2" }, { label = "c", value = "3" },
-        { label = "d", value = "4" }, { label = "e", value = "5" }, { label = "f", value = "6" },
-        { label = "", value = "skipped" }, { label = "no value" },
-    } } } },
+    usage = { details = {
+        { rows = {
+            { label = "a", value = 1 }, { label = "b", value = "2" }, { label = "c", value = "3" },
+            { label = "d", value = "4" }, { label = "e", value = "5" }, { label = "f", value = "6" },
+            { label = "", value = "skipped" }, { label = "no value" },
+        } },
+        { rows = {
+            { label = "g", value = "7" }, { label = "h", value = "8" }, { label = "i", value = "9" },
+            { label = "j", value = "10" }, { label = "k", value = "11" }, { label = "l", value = "12" },
+        } },
+    } },
 } })
 check("credits row", credited.rows[1].value, "112.4")
 check("numeric row value", credited.rows[2].value, "1")
-check("rows are capped", #credited.rows, 6)
+check("rows are capped", #credited.rows, 12)
+check("last row kept", credited.rows[12].label, "k")
+
+-- OpenRouter: a credits window without a period, balance as the plan, rows from several sections
+local openrouter = model.read("openrouter", { {
+    provider = "openrouter",
+    source = "api",
+    rateWindowLabels = { primary = "Credits" },
+    usage = {
+        loginMethod = "Balance: $68.82",
+        primary = { usedPercent = 3.646 },
+        secondary = null,
+        tertiary = null,
+        details = {
+            { title = "Credits", rows = {
+                { label = "Remaining", value = "$68.82" },
+                { label = "Used", value = "$2191.18" },
+                { label = "Total added", value = "$2260.00" },
+            } },
+            { title = "API key", chart = { kind = "bars" }, rows = {
+                { label = "API key limit", value = "$100.00", secondaryValue = "Spending cap, not balance" },
+                { label = "API key remaining", value = "$96.35" },
+                { label = "API key used", value = "$551.79" },
+                { label = "Reset window", value = "monthly" },
+                { label = "Today", value = "$2.48" },
+                { label = "This week", value = "$3.10" },
+                { label = "This month", value = "$3.65" },
+            } },
+            { title = "Spend history", rows = {
+                { label = "Last 30 days", value = "Unavailable right now", secondaryValue = "Management API key not configured" },
+            } },
+        },
+    },
+} })
+check("openrouter plan", openrouter.plan, "Balance: $68.82")
+check("openrouter window label", openrouter.windows[1].label, "Credits")
+check("openrouter window has no reset", openrouter.windows[1].resetsAt, nil)
+near("openrouter headline", openrouter.headline, 0.03646)
+check("openrouter keeps every row", #openrouter.rows, 11)
+check("openrouter spend today", openrouter.rows[8].value, "$2.48")
+check("openrouter row note", openrouter.rows[4].note, "Spending cap, not balance")
 
 -- Failures
 local snapshot, problem = model.read("openrouter", { {
