@@ -52,14 +52,16 @@ local codex = model.read("codex", { {
     credits = { remaining = 0 },
     usage = {
         loginMethod = "plus",
+        accountEmail = "work@example.com",
         primary = { usedPercent = 12, windowMinutes = 300, resetsAt = "2026-11-10T17:09:57Z" },
         secondary = { usedPercent = 55, windowMinutes = 10080, resetsAt = "2026-11-16T13:53:07Z" },
         tertiary = null,
         providerCost = { currencyCode = "Credits", limit = 0, used = 0, period = "Extra usage" },
         updatedAt = "2026-11-10T14:29:33Z",
     },
-} })
+} })[1]
 check("codex plan", codex.plan, "Plus")
+check("codex account", codex.account, "work@example.com")
 check("codex window count", #codex.windows, 2)
 check("codex first label", codex.windows[1].label, "Session")
 check("codex weekly is not a lane", codex.windows[2].lane, false)
@@ -81,8 +83,9 @@ local cursor = model.read("cursor", { {
         extraRateWindows = { { id = "cursor-grok-bot", title = "Grok Bot", window = { usedPercent = 0 } } },
         providerCost = { currencyCode = "USD", limit = 360, used = 269.07, period = "Monthly", resetsAt = reset },
     },
-} })
+} })[1]
 check("cursor plan drops the provider name", cursor.plan, "Enterprise")
+check("cursor has no account email", cursor.account, nil)
 check("cursor window count", #cursor.windows, 4)
 check("cursor primary is not a lane", cursor.windows[1].lane, false)
 check("cursor third party is a lane", cursor.windows[3].lane, true)
@@ -104,7 +107,7 @@ local copilot = model.read("copilot", { {
             { label = "Credits used", value = "0", secondaryValue = "Dec 1 at 1:00 AM", usageValue = 0 },
         } } },
     },
-} })
+} })[1]
 check("copilot has no windows", #copilot.windows, 0)
 check("copilot has no headline", copilot.headline, nil)
 check("copilot row label", copilot.rows[1].label, "Credits used")
@@ -118,7 +121,7 @@ local unlabeled = model.read("kilo", { {
         primary = { usedPercent = 150, windowMinutes = 300 },
         secondary = { usedPercent = -5 },
     },
-} })
+} })[1]
 check("label from window length", unlabeled.windows[1].label, "5 hours")
 check("label from slot", unlabeled.windows[2].label, "Secondary")
 check("percent clamps high", unlabeled.windows[1].used, 1)
@@ -140,7 +143,7 @@ local credited = model.read("codex", { {
             { label = "j", value = "10" }, { label = "k", value = "11" }, { label = "l", value = "12" },
         } },
     } },
-} })
+} })[1]
 check("credits row", credited.rows[1].value, "112.4")
 check("numeric row value", credited.rows[2].value, "1")
 check("three rows at a glance", #credited.rows, 3)
@@ -183,7 +186,7 @@ local openrouter = model.read("openrouter", { {
             } },
         },
     },
-} })
+} })[1]
 check("openrouter plan", openrouter.plan, "Balance: $68.82")
 check("openrouter window label", openrouter.windows[1].label, "Credits")
 check("openrouter window has no reset", openrouter.windows[1].resetsAt, nil)
@@ -192,10 +195,17 @@ check("openrouter stats", #openrouter.stats, 3)
 check("openrouter stat label", openrouter.stats[1].label, "Today")
 check("openrouter stat value", openrouter.stats[1].value, "$2.48")
 check("openrouter shows no rows at a glance", #openrouter.rows, 0)
-check("openrouter rows minus the charted ones", #openrouter.more, 8)
+check("openrouter rows minus the charted and unavailable ones", #openrouter.more, 7)
 check("openrouter detail order", openrouter.more[1].label, "Remaining")
 check("openrouter row note", openrouter.more[4].note, "Spending cap, not balance")
-check("openrouter last detail", openrouter.more[8].label, "Last 30 days")
+check("all-time key spend is renamed and moved last", openrouter.more[7].label, "Used all time")
+check("all-time key spend keeps its value", openrouter.more[7].value, "$551.79")
+check("first section heading", openrouter.more[1].heading, "Credits")
+check("heading only on a section's first row", openrouter.more[2].heading, nil)
+check("second section heading", openrouter.more[4].heading, "API key")
+check("section title leaves the label", openrouter.more[4].label, "Limit")
+check("section title leaves later labels", openrouter.more[5].label, "Remaining")
+check("unprefixed label is kept", openrouter.more[6].label, "Reset window")
 
 -- Charted figures in other units, and rows pinned next to meters
 local charted = model.read("kilo", { {
@@ -208,50 +218,71 @@ local charted = model.read("kilo", { {
             { label = "Bad" }, { label = "C", value = 3 }, { label = "D", value = 4 }, { label = "E", value = 5 },
         } }, rows = { { label = "Other", value = "x" } } } },
     },
-} })
+} })[1]
 check("stats are capped", #charted.stats, 4)
 check("whole number stat", charted.stats[1].value, "12 requests")
 check("fractional stat", charted.stats[2].value, "1.50 requests")
 check("credits stay visible next to meters", charted.rows[1].label, "Credits left")
 check("other rows wait in details", charted.more[1].label, "Other")
+check("one section needs no heading", charted.more[1].heading, nil)
+
+-- A single titled section keeps its labels whole
+local single = model.read("kilo", { {
+    provider = "kilo",
+    usage = { primary = { usedPercent = 10 }, details = { { title = "API key", rows = {
+        { label = "API key limit", value = "$1.00" }, { label = "API key used", value = "$0.50" },
+    } } } },
+} })[1]
+check("single section has no heading", single.more[1].heading, nil)
+check("single section keeps the label", single.more[1].label, "API key limit")
+check("other providers keep CodexBar's label", single.more[2].label, "API key used")
 
 -- Failures
-local snapshot, problem = model.read("openrouter", { {
+local snapshots, problem = model.read("openrouter", { {
     provider = "openrouter",
     source = "auto",
     error = { kind = "provider", code = 1, message = "Enter an API key." },
 } })
-check("provider error has no snapshot", snapshot, nil)
-check("provider error message", problem, "Enter an API key.")
+check("provider error still gets a card", snapshots[1].empty, true)
+check("provider error message", snapshots[1].problem, "Enter an API key.")
+check("provider error is not a server problem", problem, nil)
 
-snapshot, problem = model.read("nope", { error = "Unknown provider 'nope'." })
-check("server error has no snapshot", snapshot, nil)
+snapshots, problem = model.read("nope", { error = "Unknown provider 'nope'." })
+check("server error has no snapshot", snapshots, nil)
 check("server error message", problem, "Unknown provider 'nope'.")
 
-snapshot, problem = model.read("codex", { {
+snapshots = model.read("codex", { {
     provider = "codex",
     usage = { primary = { usedPercent = 10 } },
     error = { message = "Using last known usage." },
 } })
-near("usage survives alongside an error", snapshot.windows[1].used, 0.1)
-check("error is still reported", problem, "Using last known usage.")
+near("usage survives alongside an error", snapshots[1].windows[1].used, 0.1)
+check("error is still reported", snapshots[1].problem, "Using last known usage.")
 
-snapshot, problem = model.read("codex", { { provider = "cursor", usage = {} } })
-check("other provider is ignored", snapshot, nil)
+snapshots, problem = model.read("codex", { { provider = "cursor", usage = {} } })
+check("other provider is ignored", snapshots, nil)
 check("other provider has no problem", problem, nil)
 
-snapshot, problem = model.read("codex", "not json")
-check("garbage body", snapshot, nil)
-snapshot, problem = model.read("codex", null)
-check("null body", snapshot, nil)
+check("entry with nothing to show is skipped", model.read("codex", { { provider = "codex" } }), nil)
 
--- With several accounts, the first one that has usage wins
+snapshots = model.read("codex", "not json")
+check("garbage body", snapshots, nil)
+snapshots = model.read("codex", null)
+check("null body", snapshots, nil)
+
+-- Several accounts each get a snapshot, in the server's order
 local accounts = model.read("codex", {
     { provider = "codex", error = { message = "expired" } },
-    { provider = "codex", usage = { loginMethod = "pro" } },
-    { provider = "codex", usage = { loginMethod = "plus" } },
+    { provider = "codex", usage = { loginMethod = "pro", accountEmail = "work@example.com" } },
+    { provider = "codex", usage = { loginMethod = "plus", identity = { accountEmail = "home@example.com" } } },
 })
-check("first account with usage", accounts.plan, "Pro")
+check("every account gets a snapshot", #accounts, 3)
+check("failed account is empty", accounts[1].empty, true)
+check("failed account keeps its message", accounts[1].problem, "expired")
+check("account email", accounts[2].account, "work@example.com")
+check("account plan", accounts[2].plan, "Pro")
+check("email from the identity object", accounts[3].account, "home@example.com")
+check("second account plan", accounts[3].plan, "Plus")
 
 if failures > 0 then
     error(string.format("%d check(s) failed", failures))

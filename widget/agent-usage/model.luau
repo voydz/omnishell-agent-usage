@@ -15,6 +15,15 @@ local NAMES = {
     zai = "Z.ai",
 }
 
+-- Corrections to detail rows whose CodexBar label misleads, by provider and
+-- original label. OpenRouter's "API key used" is the key's all-time spend, but
+-- sits between a limit and a remainder that reset monthly.
+local ROW_FIXES = {
+    openrouter = {
+        ["API key used"] = { label = "API key used all time", last = true },
+    },
+}
+
 local SLOTS = { "primary", "secondary", "tertiary" }
 local SLOT_LABELS = { primary = "Usage", secondary = "Secondary", tertiary = "Tertiary" }
 local MAX_DETAIL_ROWS = 12
@@ -132,16 +141,19 @@ local function window(raw, label)
     }
 end
 
-local function plan(usage, name)
-    local label = text(usage.loginMethod)
-    if not label then
-        return nil
-    end
-    local prefix = string.lower(name) .. " "
+-- Drops a lead-in the surrounding heading already says: "Cursor Enterprise"
+-- under Cursor becomes "Enterprise", "API key limit" under API key, "Limit".
+local function trim(label, lead)
+    local prefix = string.lower(lead) .. " "
     if string.lower(string.sub(label, 1, #prefix)) == prefix and #label > #prefix then
         label = string.sub(label, #prefix + 1)
     end
     return capitalize(label)
+end
+
+local function plan(usage, name)
+    local label = text(usage.loginMethod)
+    return label and trim(label, name)
 end
 
 local function windows(entry, usage)
@@ -216,9 +228,39 @@ local function stats(usage)
     return {}, nil
 end
 
+-- CodexBar's placeholder for a figure it could not get, such as OpenRouter's
+-- 30-day spend without a Management API key.
+local function missing(value)
+    return string.match(string.lower(value), "^unavailable") ~= nil
+end
+
+-- Puts the expanded rows under their section titles when they come from more
+-- than one section; the first row of each section carries the heading.
+local function sectioned(rows)
+    local titles, last = 0, nil
+    for _, row in rows do
+        if row.section ~= last then
+            titles += 1
+            last = row.section
+        end
+    end
+    if titles < 2 then
+        return
+    end
+    last = nil
+    for _, row in rows do
+        local title = row.section
+        if title then
+            row.heading = if title ~= last then title else nil
+            row.label = trim(row.label, title)
+        end
+        last = title
+    end
+end
+
 -- Detail rows, split into the few shown at a glance and the rest. A card that
 -- already leads with meters or stats keeps its rows for the expanded view.
-local function details(entry, usage, charted, section, lead)
+local function details(id, entry, usage, charted, section, lead)
     local glance, more = {}, {}
     local function add(row, pinned)
         if #glance + #more >= MAX_DETAIL_ROWS then
@@ -239,17 +281,31 @@ local function details(entry, usage, charted, section, lead)
     for _, item in charted do
         shown[item.label] = true
     end
+    local fixes = ROW_FIXES[id] or {}
     for _, group in object(usage.details) or {} do
+        local trailing = {}
         for _, raw in object(group) and object(group.rows) or {} do
             local row = object(raw)
             local label = row and text(row.label)
             local value = row and (text(row.value) or (number(row.value) and tostring(row.value)))
-            -- A row that repeats a charted figure would only say it twice.
-            if label and value and not (group == section and shown[label]) then
-                add({ label = label, value = value, note = text(row.secondaryValue) }, false)
+            -- A row that repeats a charted figure would only say it twice, and
+            -- one that only reports a figure as unavailable says nothing.
+            if label and value and not (group == section and shown[label]) and not missing(value) then
+                local fix = fixes[label]
+                local item = { label = fix and fix.label or label, value = value, note = text(row.secondaryValue),
+                    section = text(group.title) }
+                if fix and fix.last then
+                    trailing[#trailing + 1] = item
+                else
+                    add(item, false)
+                end
             end
         end
+        for _, item in trailing do
+            add(item, false)
+        end
     end
+    sectioned(more)
     return glance, more
 end
 
@@ -265,38 +321,32 @@ local function headline(list)
     return top
 end
 
--- Returns `snapshot, problem`. A snapshot is only returned when the provider
--- reported usage; `problem` is the provider's or server's own message.
-function M.read(id, body)
-    local root = object(body)
-    if not root then
-        return nil, nil
-    end
-    if text(root.error) then
-        return nil, root.error
-    end
-    local entry
-    for _, raw in root do
-        local item = object(raw)
-        if item and item.provider == id and (not entry or (object(item.usage) and not object(entry.usage))) then
-            entry = item
-        end
-    end
-    if not entry then
-        return nil, nil
-    end
+local function account(usage)
+    local identity = object(usage.identity)
+    return text(usage.accountEmail) or (identity and text(identity.accountEmail)) or nil
+end
+
+-- One account's snapshot; nil when the entry reports neither usage nor an
+-- error. An entry with an error but no usage becomes an `empty` snapshot, so
+-- the account still gets a card.
+local function snapshot(id, entry)
     local failure = object(entry.error)
     local problem = failure and (text(failure.message) or "The provider reported an error.") or nil
     local usage = object(entry.usage)
     if not usage then
-        return nil, problem
+        if not problem then
+            return nil
+        end
+        return { empty = true, problem = problem, windows = {}, stats = {}, rows = {}, more = {} }
     end
     local name = M.name(id)
     local list = windows(entry, usage)
     local cost = spend(usage)
     local charted, section = stats(usage)
-    local rows, more = details(entry, usage, charted, section, #list > 0 or cost ~= nil or #charted > 0)
+    local rows, more = details(id, entry, usage, charted, section, #list > 0 or cost ~= nil or #charted > 0)
     return {
+        account = account(usage),
+        problem = problem,
         plan = plan(usage, name),
         windows = list,
         headline = headline(list),
@@ -305,7 +355,35 @@ function M.read(id, body)
         rows = rows,
         more = more,
         updatedAt = M.time(usage.updatedAt),
-    }, problem
+    }
+end
+
+-- Returns `snapshots, problem`. `snapshots` holds one snapshot per account in
+-- the server's order (CodexBar reports every signed-in Codex account, one
+-- account for other providers); each carries its own `problem`. The second
+-- value is the server's message when it could not answer at all.
+function M.read(id, body)
+    local root = object(body)
+    if not root then
+        return nil, nil
+    end
+    if text(root.error) then
+        return nil, root.error
+    end
+    local list = {}
+    for _, raw in root do
+        local entry = object(raw)
+        if entry and entry.provider == id then
+            local item = snapshot(id, entry)
+            if item then
+                list[#list + 1] = item
+            end
+        end
+    end
+    if #list == 0 then
+        return nil, nil
+    end
+    return list, nil
 end
 
 return M

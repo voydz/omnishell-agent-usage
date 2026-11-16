@@ -86,6 +86,30 @@ local function schedule(state)
     loop.stalled = if timer then nil else tostring(err)
 end
 
+-- Keeps an account's last numbers when only its refresh failed, so its card
+-- can show them marked stale next to the error. Accounts match by e-mail, or
+-- by position when the failed entry does not name one.
+local function merge(old, new)
+    old = old or {}
+    local accounts = {}
+    for _, item in old do
+        if item.account then
+            accounts[item.account] = item
+        end
+    end
+    for index, item in new do
+        if item.empty then
+            local before = if item.account then accounts[item.account] else old[index]
+            if before and not before.empty then
+                local kept = table.clone(before)
+                kept.problem = item.problem
+                new[index] = kept
+            end
+        end
+    end
+    return new
+end
+
 local function pump(state, force)
     local generation = loop.generation
     while loop.active < CONCURRENCY and #loop.queue > 0 do
@@ -101,14 +125,14 @@ local function pump(state, force)
                 return
             end
             loop.requests[id] = nil
-            local snapshot, problem = model.read(id, result.json)
-            if not snapshot and not problem then
+            local snapshots, problem = model.read(id, result.json)
+            if not snapshots and not problem then
                 local retry
                 problem, retry = failure(result)
                 loop.retry = loop.retry or retry
             end
-            if snapshot then
-                entry.snapshot = snapshot
+            if snapshots then
+                entry.snapshots = merge(entry.snapshots, snapshots)
                 entry.fetchedAt = os.time()
             end
             entry.error = problem
@@ -192,21 +216,31 @@ local function tint(used)
     return if used >= 0.8 then "warning" else nil
 end
 
-local function stale(entry, now)
-    return entry.snapshot ~= nil
-        and (entry.error ~= nil or now - (entry.fetchedAt or 0) > config.refresh * 3 + REQUEST_TIMEOUT)
+-- Whether a snapshot shows old numbers: its own account's refresh failed, the
+-- whole provider's did, or the data has outlived several refresh intervals.
+local function stale(entry, snapshot, now)
+    return snapshot.problem ~= nil or entry.error ~= nil
+        or now - (entry.fetchedAt or 0) > config.refresh * 3 + REQUEST_TIMEOUT
 end
 
--- The provider closest to a limit, for the bar slot and its tooltip.
+-- The account closest to a limit, for the bar slot and its tooltip.
 local function summary(ctx)
     local top, parts, problem = nil, {}, nil
     for _, id in config.providers do
         local entry = store[id] or {}
-        local used = entry.snapshot and entry.snapshot.headline
+        local snapshots = entry.snapshots or {}
         problem = problem or entry.error
-        if used then
-            parts[#parts + 1] = string.format("%s %s", model.name(id), ctx.format.percent(used))
-            top = if top and top > used then top else used
+        for _, snapshot in snapshots do
+            problem = problem or snapshot.problem
+            local used = snapshot.headline
+            if used then
+                local name = model.name(id)
+                if snapshot.account and #snapshots > 1 then
+                    name = string.format("%s (%s)", name, snapshot.account)
+                end
+                parts[#parts + 1] = string.format("%s %s", name, ctx.format.percent(used))
+                top = if top and top > used then top else used
+            end
         end
     end
     local help = if #parts > 0 then table.concat(parts, " · ") else "Agent usage"
@@ -289,22 +323,33 @@ local function disclosure(inner, id, open)
         look.glyph{ name = if open then "chevron.up" else "chevron.down", size = 10, color = "secondaryForeground" } }
 end
 
+-- Title of a group of detail rows, set off from the group above it.
+local function heading(inner, title)
+    return ui.column{ w = inner, gap = 0, center = false,
+        ui.box{ w = 1, h = 4 },
+        look.text{ text = string.upper(title), size = 10, weight = "semibold", color = "secondaryForeground",
+            maxWidth = inner } }
+end
+
 local function notice(text, width, color)
     return look.text{ text = text, size = 11, color = color or "secondaryForeground", maxWidth = width, lines = 4 }
 end
 
-local function card(ctx, id, now, width, inner, shared)
-    local entry = store[id] or {}
-    local snapshot = entry.snapshot
+local function card(ctx, id, entry, snapshot, key, now, width, inner, shared)
     local title = { w = inner, gap = 8,
         look.text{ text = model.name(id), size = 13, weight = "semibold", grow = 1 } }
-    if snapshot and stale(entry, now) then
+    if snapshot and not snapshot.empty and stale(entry, snapshot, now) then
         title[#title + 1] = look.text{ text = "Stale", size = 11, color = "warning" }
     end
     if snapshot and snapshot.plan then
         title[#title + 1] = look.text{ text = snapshot.plan, size = 11, color = "secondaryForeground" }
     end
-    local group = { w = width, gap = 10, ui.row(title) }
+    local head = { w = inner, gap = 3, center = false, ui.row(title) }
+    if snapshot and snapshot.account then
+        head[#head + 1] = look.text{ text = snapshot.account, size = 11, color = "secondaryForeground",
+            maxWidth = inner }
+    end
+    local group = { w = width, gap = 10, ui.column(head) }
     if snapshot then
         local first = snapshot.windows[1]
         for _, item in snapshot.windows do
@@ -326,20 +371,26 @@ local function card(ctx, id, now, width, inner, shared)
             group[#group + 1] = detail(inner, row)
         end
         if #snapshot.more > 0 then
-            local open = ctx.state.details == id
-            group[#group + 1] = disclosure(inner, id, open)
+            local open = ctx.state.details == key
+            group[#group + 1] = disclosure(inner, key, open)
             if open then
                 for _, row in snapshot.more do
+                    if row.heading then
+                        group[#group + 1] = heading(inner, row.heading)
+                    end
                     group[#group + 1] = detail(inner, row)
                 end
             end
         end
         if #snapshot.windows == 0 and not spend and #snapshot.stats == 0 and #snapshot.rows == 0
-            and #snapshot.more == 0 then
+            and #snapshot.more == 0 and not snapshot.problem then
             group[#group + 1] = notice("No usage figures reported.", inner)
         end
     end
-    if entry.error and not shared then
+    local problem = snapshot and snapshot.problem or nil
+    if problem then
+        group[#group + 1] = notice(problem, inner, "warning")
+    elseif entry.error and not shared then
         group[#group + 1] = notice(entry.error, inner, "warning")
     elseif not snapshot and not entry.error then
         group[#group + 1] = notice("Loading…", inner)
@@ -402,9 +453,15 @@ function popout(ctx)
             notice("No providers selected. Add CodexBar provider IDs in this widget's options.", inner) }
     end
     for _, id in config.providers do
-        local entry = store[id]
-        if not shared or (entry and entry.snapshot) then
-            props[#props + 1] = card(ctx, id, now, width, inner, shared ~= nil)
+        local entry = store[id] or {}
+        local snapshots = entry.snapshots
+        if snapshots and #snapshots > 0 then
+            for index, snapshot in snapshots do
+                props[#props + 1] = card(ctx, id, entry, snapshot, id .. "#" .. index, now, width, inner,
+                    shared ~= nil)
+            end
+        elseif not shared then
+            props[#props + 1] = card(ctx, id, entry, nil, id, now, width, inner, false)
         end
     end
     return look.panel(ctx, props)

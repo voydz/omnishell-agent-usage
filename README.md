@@ -75,8 +75,8 @@ refresh = 300
 
 ## What it shows
 
-**On the bar:** an icon and the highest usage among your providers. It turns to the warning colour
-at 80 % and to the error colour at 100 %. The tooltip lists each provider's figure.
+**On the bar:** an icon and the highest usage among your providers and accounts. It turns to the
+warning colour at 80 % and to the error colour at 100 %. The tooltip lists each provider's figure.
 
 A provider's figure is the highest of its main rate windows, such as the Codex session and weekly
 windows or Cursor's total. Two kinds of window appear in the panel without driving the bar: lanes
@@ -86,8 +86,10 @@ shows its detail rows in the panel and leaves the bar figure alone.
 
 **In the panel:** one card per provider with its plan, a meter and reset countdown per window, spend
 against the limit where the provider reports one, and the figures a provider charts (OpenRouter's
-spend today, this week and this month). Everything else a provider reports sits behind "Details",
-so a card stays short; a provider with no meters shows its first three rows directly.
+spend today, this week and this month). A provider that reports an account e-mail shows it under
+its name; Codex gets one card per signed-in account, since CodexBar reports them all. Everything
+else a provider reports sits behind "Details", grouped under the provider's section titles, so a
+card stays short; a provider with no meters shows its first three rows directly.
 
 The button in the header fetches fresh numbers. A card is marked "Stale" when its last refresh
 failed and it is showing older numbers, and the error is shown with it.
@@ -150,7 +152,8 @@ the CodexBar config in `~/.config/codexbar`.
 
 ## Limits
 
-- One account per provider: the first one CodexBar reports.
+- One account per provider, except Codex: CodexBar's server reports every signed-in Codex account
+  and each gets its own card. Other providers show the account CodexBar has active.
 - No token counts or cost history, only the usage and spend the provider reports for the current
   period.
 - macOS only, like OmniWM.
